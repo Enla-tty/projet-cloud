@@ -1,0 +1,274 @@
+---
+- name: Déploiement infrastructure WordPress sur Azure
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    rg_name: "wordpress-rg"
+    location: "francecentral"
+    vnet_name: "wordpress-vnet"
+    admin_username: "azureuser"
+    vm_size: "Standard_B1s"
+    vm_image:
+      offer: "0001-com-ubuntu-server-jammy"
+      publisher: "Canonical"
+      sku: "22_04-lts-gen2"
+      version: "latest"
+
+  tasks:
+
+  # =============================================
+  # Resource Group
+  # =============================================
+  - name: Créer le resource group
+    azure.azcollection.azure_rm_resourcegroup:
+      name: "{{ rg_name }}"
+      location: "{{ location }}"
+
+  # =============================================
+  # VNet
+  # =============================================
+  - name: Créer le VNet
+    azure.azcollection.azure_rm_virtualnetwork:
+      name: "{{ vnet_name }}"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      address_prefixes_cidr:
+      - "10.0.0.0/24"
+
+  # =============================================
+  # Subnets
+  # =============================================
+  - name: Créer le subnet jumpoff
+    azure.azcollection.azure_rm_subnet:
+      name: "subnet-jumpoff"
+      resource_group: "{{ rg_name }}"
+      virtual_network_name: "{{ vnet_name }}"
+      address_prefix_cidr: "10.0.0.0/28"
+
+  - name: Créer le subnet app
+    azure.azcollection.azure_rm_subnet:
+      name: "subnet-app"
+      resource_group: "{{ rg_name }}"
+      virtual_network_name: "{{ vnet_name }}"
+      address_prefix_cidr: "10.0.0.16/28"
+
+  - name: Créer le subnet data
+    azure.azcollection.azure_rm_subnet:
+      name: "subnet-data"
+      resource_group: "{{ rg_name }}"
+      virtual_network_name: "{{ vnet_name }}"
+      address_prefix_cidr: "10.0.0.32/28"
+
+  # =============================================
+  # IP Publique pour le Jump-off
+  # =============================================
+  - name: Créer l'IP publique jumpoff-pip
+    azure.azcollection.azure_rm_publicipaddress:
+      name: "jumpoff-pip"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      sku: "Standard"
+      allocation_method: "Dynamic"
+
+  # =============================================
+  # IP Publique pour le Load Balancer
+  # =============================================
+  - name: Créer l'IP publique lb-pip
+    azure.azcollection.azure_rm_publicipaddress:
+      name: "lb-pip"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      sku: "Standard"
+      allocation_method: "Dynamic"
+
+  # =============================================
+  # NIC pour jumpoff-vm
+  # =============================================
+  - name: Créer la NIC jumpoff-vm-nic
+    azure.azcollection.azure_rm_networkinterface:
+      name: "jumpoff-vm-nic"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      virtual_network: "{{ vnet_name }}"
+      subnet_name: "subnet-jumpoff"
+      ip_configurations:
+      - name: "ipconfig1"
+        primary: true
+        public_ip_address_name: "jumpoff-pip"
+
+  # =============================================
+  # NIC pour app-vm-1
+  # =============================================
+  - name: Créer la NIC app-vm-1-nic
+    azure.azcollection.azure_rm_networkinterface:
+      name: "app-vm-1-nic"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      virtual_network: "{{ vnet_name }}"
+      subnet_name: "subnet-app"
+      ip_configurations:
+      - name: "ipconfig1"
+        primary: true
+
+  # =============================================
+  # NIC pour app-vm-2
+  # =============================================
+  - name: Créer la NIC app-vm-2-nic
+    azure.azcollection.azure_rm_networkinterface:
+      name: "app-vm-2-nic"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      virtual_network: "{{ vnet_name }}"
+      subnet_name: "subnet-app"
+      ip_configurations:
+      - name: "ipconfig1"
+        primary: true
+
+  # =============================================
+  # Générer une clé SSH si elle n'existe pas
+  # =============================================
+  - name: Vérifier si la clé SSH existe
+    stat:
+      path: "~/.ssh/id_rsa"
+    register: ssh_key
+
+  - name: Générer une clé SSH
+    openssh_keypair:
+      path: "~/.ssh/id_rsa"
+      type: rsa
+      size: 4096
+    when: not ssh_key.stat.exists
+
+  - name: Lire la clé publique SSH
+    slurp:
+      src: "~/.ssh/id_rsa.pub"
+    register: ssh_pub_key
+
+  # =============================================
+  # VM jumpoff-vm
+  # =============================================
+  - name: Créer la VM jumpoff-vm
+    azure.azcollection.azure_rm_virtualmachine:
+      name: "jumpoff-vm"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      vm_size: "{{ vm_size }}"
+      admin_username: "{{ admin_username }}"
+      ssh_password_enabled: false
+      ssh_public_keys:
+      - path: "/home/{{ admin_username }}/.ssh/authorized_keys"
+        key_data: "{{ ssh_pub_key.content | b64decode }}"
+      network_interfaces:
+      - "jumpoff-vm-nic"
+      image: "{{ vm_image }}"
+      os_disk_size_gb: 30
+      managed_disk_type: "StandardHDD_LRS"
+
+  # =============================================
+  # VM app-vm-1
+  # =============================================
+  - name: Créer la VM app-vm-1
+    azure.azcollection.azure_rm_virtualmachine:
+      name: "app-vm-1"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      vm_size: "{{ vm_size }}"
+      admin_username: "{{ admin_username }}"
+      ssh_password_enabled: false
+      ssh_public_keys:
+      - path: "/home/{{ admin_username }}/.ssh/authorized_keys"
+        key_data: "{{ ssh_pub_key.content | b64decode }}"
+      network_interfaces:
+      - "app-vm-1-nic"
+      image: "{{ vm_image }}"
+      os_disk_size_gb: 30
+      managed_disk_type: "StandardHDD_LRS"
+
+  # =============================================
+  # VM app-vm-2
+  # =============================================
+  - name: Créer la VM app-vm-2
+    azure.azcollection.azure_rm_virtualmachine:
+      name: "app-vm-2"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      vm_size: "{{ vm_size }}"
+      admin_username: "{{ admin_username }}"
+      ssh_password_enabled: false
+      ssh_public_keys:
+      - path: "/home/{{ admin_username }}/.ssh/authorized_keys"
+        key_data: "{{ ssh_pub_key.content | b64decode }}"
+      network_interfaces:
+      - "app-vm-2-nic"
+      image: "{{ vm_image }}"
+      os_disk_size_gb: 30
+      managed_disk_type: "StandardHDD_LRS"
+
+  # =============================================
+  # Load Balancer (Basic SKU = gratuit)
+  # =============================================
+  - name: Créer le Load Balancer
+    azure.azcollection.azure_rm_loadbalancer:
+      name: "wordpress-lb"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      sku: "Basic"
+      frontend_ip_configurations:
+      - name: "lb-frontend"
+        public_ip_address: "lb-pip"
+      backend_address_pools:
+      - name: "lb-backend-pool"
+      probes:
+      - name: "lb-health-probe"
+        protocol: "Tcp"
+        port: 80
+        interval: 5
+        fail_count: 2
+      load_balancing_rules:
+      - name: "lb-rule-http"
+        frontend_ip_configuration: "lb-frontend"
+        backend_address_pool: "lb-backend-pool"
+        probe: "lb-health-probe"
+        protocol: "Tcp"
+        frontend_port: 80
+        backend_port: 80
+      - name: "lb-rule-https"
+        frontend_ip_configuration: "lb-frontend"
+        backend_address_pool: "lb-backend-pool"
+        probe: "lb-health-probe"
+        protocol: "Tcp"
+        frontend_port: 443
+        backend_port: 443
+
+  # =============================================
+  # Associer les NICs au backend pool du LB
+  # =============================================
+  - name: Associer app-vm-1-nic au backend pool du LB
+    azure.azcollection.azure_rm_networkinterface:
+      name: "app-vm-1-nic"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      virtual_network: "{{ vnet_name }}"
+      subnet_name: "subnet-app"
+      ip_configurations:
+      - name: "ipconfig1"
+        primary: true
+        load_balancer_backend_address_pools:
+        - name: "lb-backend-pool"
+          load_balancer: "wordpress-lb"
+
+  - name: Associer app-vm-2-nic au backend pool du LB
+    azure.azcollection.azure_rm_networkinterface:
+      name: "app-vm-2-nic"
+      resource_group: "{{ rg_name }}"
+      location: "{{ location }}"
+      virtual_network: "{{ vnet_name }}"
+      subnet_name: "subnet-app"
+      ip_configurations:
+      - name: "ipconfig1"
+        primary: true
+        load_balancer_backend_address_pools:
+        - name: "lb-backend-pool"
+          load_balancer: "wordpress-lb"
