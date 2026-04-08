@@ -6,10 +6,10 @@
 
   vars:
     rg_name: "wordpress-rg"
-    location: "francecentral"
+    location: "northeurope"
     vnet_name: "wordpress-vnet"
     admin_username: "azureuser"
-    vm_size: "Standard_B1s"
+    vm_size: "Standard_F1als_v7"
     vm_image:
       offer: "0001-com-ubuntu-server-jammy"
       publisher: "Canonical"
@@ -70,7 +70,7 @@
       resource_group: "{{ rg_name }}"
       location: "{{ location }}"
       sku: "Standard"
-      allocation_method: "Dynamic"
+      allocation_method: "Static"
 
   # =============================================
   # IP Publique pour le Load Balancer
@@ -81,7 +81,7 @@
       resource_group: "{{ rg_name }}"
       location: "{{ location }}"
       sku: "Standard"
-      allocation_method: "Dynamic"
+      allocation_method: "Static"
 
   # =============================================
   # NIC pour jumpoff-vm
@@ -164,7 +164,7 @@
       - "jumpoff-vm-nic"
       image: "{{ vm_image }}"
       os_disk_size_gb: 30
-      managed_disk_type: "StandardHDD_LRS"
+      managed_disk_type: "Standard_LRS"
 
   # =============================================
   # VM app-vm-1
@@ -184,7 +184,7 @@
       - "app-vm-1-nic"
       image: "{{ vm_image }}"
       os_disk_size_gb: 30
-      managed_disk_type: "StandardHDD_LRS"
+      managed_disk_type: "Standard_LRS"
 
   # =============================================
   # VM app-vm-2
@@ -204,7 +204,7 @@
       - "app-vm-2-nic"
       image: "{{ vm_image }}"
       os_disk_size_gb: 30
-      managed_disk_type: "StandardHDD_LRS"
+      managed_disk_type: "Standard_LRS"
 
   # =============================================
   # Load Balancer (Basic SKU = gratuit)
@@ -214,7 +214,7 @@
       name: "wordpress-lb"
       resource_group: "{{ rg_name }}"
       location: "{{ location }}"
-      sku: "Basic"
+      sku: "Standard"
       frontend_ip_configurations:
       - name: "lb-frontend"
         public_ip_address: "lb-pip"
