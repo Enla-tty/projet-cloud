@@ -1,1 +1,7 @@
 venv/
+venv/
+vars/secrets.yml
+
+*.pem
+id_rsa
+id_rsa.pub
