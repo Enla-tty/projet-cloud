@@ -1,0 +1,82 @@
+---
+- name: Déploiement MySQL Flexible Server pour WordPress
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    rg_name: "wordpress-rg"
+    location: "germanywestcentral"
+    vnet_name: "wordpress-vnet"
+    mysql_server_name: "wordpress-mysql-flex"
+    mysql_sku: "Standard_B1ms"
+    mysql_tier: "Burstable"
+    mysql_storage_gb: 20
+    mysql_version: "8.0.21"
+
+  vars_files:
+    - ../vars/secrets.yml
+
+  tasks:
+
+    - name: Créer la zone DNS privée pour MySQL
+      azure.azcollection.azure_rm_privatednszone:
+        name: "wordpress.mysql.database.azure.com"
+        resource_group: "{{ rg_name }}"
+
+    - name: Lier la zone DNS privée au VNet
+      azure.azcollection.azure_rm_privatednszonelink:
+        name: "mysql-dns-link"
+        resource_group: "{{ rg_name }}"
+        zone_name: "wordpress.mysql.database.azure.com"
+        virtual_network: "{{ vnet_name }}"
+        registration_enabled: false
+
+    - name: Récupérer l'ID de la subscription
+      command: az account show --query id -o tsv
+      register: subscription_id
+      changed_when: false
+
+    - name: Créer le serveur MySQL Flexible
+      azure.azcollection.azure_rm_mysqlflexibleserver:
+        name: "{{ mysql_server_name }}"
+        resource_group: "{{ rg_name }}"
+        location: "{{ location }}"
+        sku:
+          name: "{{ mysql_sku }}"
+          tier: "{{ mysql_tier }}"
+        administrator_login: "{{ mysql_admin_user }}"
+        administrator_login_password: "{{ mysql_admin_password }}"
+        version: "{{ mysql_version }}"
+        storage:
+          storage_size_gb: "{{ mysql_storage_gb }}"
+        network:
+          delegated_subnet_resource_id: "/subscriptions/{{ subscription_id.stdout }}/resourceGroups/{{ rg_name }}/providers/Microsoft.Network/virtualNetworks/{{ vnet_name }}/subnets/subnet-data"
+          private_dns_zone_resource_id: "/subscriptions/{{ subscription_id.stdout }}/resourceGroups/{{ rg_name }}/providers/Microsoft.Network/privateDnsZones/wordpress.mysql.database.azure.com"
+
+    - name: Désactiver require_secure_transport
+      command: >
+        az mysql flexible-server parameter set
+        --resource-group {{ rg_name }}
+        --server-name {{ mysql_server_name }}
+        --name require_secure_transport
+        --value OFF
+      changed_when: true
+
+    - name: Créer la base de données wordpress
+      azure.azcollection.azure_rm_mysqlflexibledatabase:
+        name: "{{ mysql_db_name }}"
+        resource_group: "{{ rg_name }}"
+        server_name: "{{ mysql_server_name }}"
+        charset: "utf8mb4"
+        collation: "utf8mb4_general_ci"
+
+    - name: Récupérer les infos du serveur MySQL
+      azure.azcollection.azure_rm_mysqlflexibleserver_info:
+        name: "{{ mysql_server_name }}"
+        resource_group: "{{ rg_name }}"
+      register: mysql_info
+
+    - name: Afficher le FQDN MySQL
+      debug:
+        msg: "MySQL FQDN: {{ mysql_info.servers[0].fully_qualified_domain_name }}"

@@ -1,0 +1,95 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+- nginx
+- mysql-client
+- php-fpm
+- php-mysql
+- php-curl
+- php-gd
+- php-mbstring
+- php-xml
+- php-xmlrpc
+- php-soap
+- php-intl
+- php-zip
+- unzip
+- curl
+- rsync
+
+write_files:
+- path: /usr/local/bin/wp-bootstrap.sh
+  permissions: "0755"
+  content: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    WP_DB_NAME="${WP_DB_NAME:?missing}"
+    WP_DB_USER="${WP_DB_USER:?missing}"
+    WP_DB_PASS="${WP_DB_PASS:?missing}"
+    WP_DB_HOST="${WP_DB_HOST:?missing}"
+
+    cd /tmp
+    curl -fsSLo latest.tar.gz https://wordpress.org/latest.tar.gz
+    tar -xzf latest.tar.gz
+
+    sudo rsync -a /tmp/wordpress/ /var/www/wordpress/
+    sudo chown -R www-data:www-data /var/www/wordpress
+    sudo find /var/www/wordpress -type d -exec chmod 755 {} \;
+    sudo find /var/www/wordpress -type f -exec chmod 644 {} \;
+
+    cp /var/www/wordpress/wp-config-sample.php /var/www/wordpress/wp-config.php
+    sed -i "s/database_name_here/${WP_DB_NAME}/" /var/www/wordpress/wp-config.php
+    sed -i "s/username_here/${WP_DB_USER}/" /var/www/wordpress/wp-config.php
+    sed -i "s/password_here/${WP_DB_PASS}/" /var/www/wordpress/wp-config.php
+    sed -i "s/localhost/${WP_DB_HOST}/" /var/www/wordpress/wp-config.php
+
+- path: /etc/nginx/sites-available/wordpress
+  permissions: "0644"
+  content: |
+    server {
+        listen 80 default_server;
+
+        # SSL configuration
+        listen 443 ssl default_server;
+
+        ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+        ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+        server_name _;
+        root /var/www/wordpress;
+        index index.php index.html;
+
+        location / {
+            try_files $uri $uri/ /index.php?$args;
+        }
+
+        location ~ \.php$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            include fastcgi_params;
+        }
+
+        location ~ /\.ht {
+            deny all;
+        }
+
+        location = /wp-config.php {
+            deny all;
+        }
+
+        client_max_body_size 64M;
+    }
+
+runcmd:
+- mkdir -p /var/www/wordpress
+- rm -f /etc/nginx/sites-enabled/default
+- ln -sf /etc/nginx/sites-available/wordpress /etc/nginx/sites-enabled/wordpress
+- openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/nginx-selfsigned.key -out /etc/ssl/certs/nginx-selfsigned.crt -subj "/CN=wordpress"
+- bash -lc "WP_DB_NAME='{{ mysql_db_name }}' WP_DB_USER='{{ mysql_admin_user }}' WP_DB_PASS='{{ mysql_admin_password }}' WP_DB_HOST='10.0.3.4' /usr/local/bin/wp-bootstrap.sh"
+- systemctl enable php8.3-fpm
+- systemctl restart php8.3-fpm
+- systemctl enable nginx
+- systemctl restart nginx

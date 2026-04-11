@@ -1,0 +1,65 @@
+---
+- name: Déploiement réseau WordPress sur Azure
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    rg_name: "wordpress-rg"
+    location: "germanywestcentral"
+    vnet_name: "wordpress-vnet"
+
+  tasks:
+
+    - name: Créer le resource group
+      azure.azcollection.azure_rm_resourcegroup:
+        name: "{{ rg_name }}"
+        location: "{{ location }}"
+
+    - name: Créer le VNet
+      azure.azcollection.azure_rm_virtualnetwork:
+        name: "{{ vnet_name }}"
+        resource_group: "{{ rg_name }}"
+        location: "{{ location }}"
+        address_prefixes_cidr:
+          - "10.0.0.0/24"
+
+    - name: Créer le subnet jumpoff
+      azure.azcollection.azure_rm_subnet:
+        name: "subnet-jumpoff"
+        resource_group: "{{ rg_name }}"
+        virtual_network_name: "{{ vnet_name }}"
+        address_prefix_cidr: "10.0.0.0/28"
+
+    - name: Créer le subnet app
+      azure.azcollection.azure_rm_subnet:
+        name: "subnet-app"
+        resource_group: "{{ rg_name }}"
+        virtual_network_name: "{{ vnet_name }}"
+        address_prefix_cidr: "10.0.0.16/28"
+
+    - name: Créer le subnet data avec délégation MySQL
+      azure.azcollection.azure_rm_subnet:
+        name: "subnet-data"
+        resource_group: "{{ rg_name }}"
+        virtual_network_name: "{{ vnet_name }}"
+        address_prefix_cidr: "10.0.0.32/28"
+        delegations:
+          - name: "mysql-delegation"
+            serviceName: "Microsoft.DBforMySQL/flexibleServers"
+
+    - name: Créer l'IP publique jumpoff-pip
+      azure.azcollection.azure_rm_publicipaddress:
+        name: "jumpoff-pip"
+        resource_group: "{{ rg_name }}"
+        location: "{{ location }}"
+        sku: "Standard"
+        allocation_method: "Static"
+
+    - name: Créer l'IP publique lb-pip
+      azure.azcollection.azure_rm_publicipaddress:
+        name: "lb-pip"
+        resource_group: "{{ rg_name }}"
+        location: "{{ location }}"
+        sku: "Standard"
+        allocation_method: "Static"
