@@ -6,7 +6,7 @@
 
   vars:
     rg_name: "wordpress-rg"
-    location: "germanywestcentral"
+    location: "denmarkeast"
     vnet_name: "wordpress-vnet"
 
   tasks:

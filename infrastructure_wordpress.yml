@@ -6,7 +6,7 @@
 
   vars:
     rg_name: "wordpress-rg"
-    location: "northeurope"
+    location: "eastdenmark"
     vnet_name: "wordpress-vnet"
     admin_username: "azureuser"
     vm_size: "Standard_F1als_v7"
