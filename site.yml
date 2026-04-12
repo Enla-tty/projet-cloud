@@ -1,4 +1,4 @@
 ---
-- import_playbook: playbooks/network.yml
-- import_playbook: playbooks/mysql.yml
-- import_playbook: playbooks/infrastructure.yml
+- import_playbook: playbooks/01-network.yml
+- import_playbook: playbooks/02-mysql.yml
+- import_playbook: playbooks/03-infrastructure.yml

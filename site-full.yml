@@ -1,0 +1,12 @@
+---
+# Déploiement complet de l'infrastructure WordPress
+# Ordre d'exécution important :
+# 1. Réseau (RG, VNet, subnets, IPs)
+# 2. MySQL (serveur + base de données)
+# 3. Infrastructure (VMs avec cloud-init OU sans)
+# 4. WordPress (déploiement manuel via Ansible)
+
+- import_playbook: playbooks/01-network.yml
+- import_playbook: playbooks/02-mysql.yml
+- import_playbook: playbooks/03-infrastructure-no-cloudinit.yml
+- import_playbook: deploy-wordpress.yml

@@ -4,16 +4,16 @@ package_upgrade: true
 packages:
 - nginx
 - mysql-client
-- php-fpm
-- php-mysql
-- php-curl
-- php-gd
-- php-mbstring
-- php-xml
-- php-xmlrpc
-- php-soap
-- php-intl
-- php-zip
+- php8.1-fpm
+- php8.1-mysql
+- php8.1-curl
+- php8.1-gd
+- php8.1-mbstring
+- php8.1-xml
+- php8.1-xmlrpc
+- php8.1-soap
+- php8.1-intl
+- php8.1-zip
 - unzip
 - curl
 - rsync
@@ -67,7 +67,7 @@ write_files:
 
         location ~ \.php$ {
             include snippets/fastcgi-php.conf;
-            fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+            fastcgi_pass unix:/run/php/php8.1-fpm.sock;
             fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
             include fastcgi_params;
         }
@@ -88,8 +88,8 @@ runcmd:
 - rm -f /etc/nginx/sites-enabled/default
 - ln -sf /etc/nginx/sites-available/wordpress /etc/nginx/sites-enabled/wordpress
 - openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/nginx-selfsigned.key -out /etc/ssl/certs/nginx-selfsigned.crt -subj "/CN=wordpress"
-- bash -lc "WP_DB_NAME='{{ mysql_db_name }}' WP_DB_USER='{{ mysql_admin_user }}' WP_DB_PASS='{{ mysql_admin_password }}' WP_DB_HOST='10.0.3.4' /usr/local/bin/wp-bootstrap.sh"
-- systemctl enable php8.3-fpm
-- systemctl restart php8.3-fpm
+- bash -lc "WP_DB_NAME='{{ mysql_db_name }}' WP_DB_USER='{{ mysql_admin_user }}' WP_DB_PASS='{{ mysql_admin_password }}' WP_DB_HOST='{{ mysql_server_fqdn }}' /usr/local/bin/wp-bootstrap.sh"
+- systemctl enable php8.1-fpm
+- systemctl restart php8.1-fpm
 - systemctl enable nginx
 - systemctl restart nginx

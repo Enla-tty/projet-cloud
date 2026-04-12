@@ -1,0 +1,6 @@
+---
+# Déploie uniquement WordPress sur les VMs existantes
+# Nécessite que l'infrastructure soit déjà déployée
+
+- name: Déployer WordPress sur les VMs applicatives existantes
+  import_playbook: deploy-wordpress.yml

@@ -1,0 +1,379 @@
+---
+# Playbook complet pour déployer WordPress sur les VMs applicatives
+# Ce playbook configure dynamiquement l'accès via le jumpoff
+
+- name: Préparer le déploiement WordPress
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - vars/secrets.yml
+
+  tasks:
+    - name: Récupérer l'IP publique du jumpoff
+      azure.azcollection.azure_rm_publicipaddress_info:
+        resource_group: wordpress-rg
+        name: jumpoff-pip
+      register: jumpoff_pip
+
+    - name: Définir les variables pour les VMs
+      ansible.builtin.set_fact:
+        jumpoff_ip: "{{ jumpoff_pip.publicipaddresses[0].ip_address }}"
+        mysql_fqdn: "wordpress-mysql-flex.wordpress.mysql.database.azure.com"
+
+    - name: Afficher les informations de connexion
+      ansible.builtin.debug:
+        msg:
+          - "Jumpoff IP: {{ jumpoff_ip }}"
+          - "MySQL FQDN: {{ mysql_fqdn }}"
+
+    - name: Ajouter les VMs applicatives à l'inventaire dynamique
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: app_vms
+        ansible_host: "{{ item.ip }}"
+        ansible_user: azureuser
+        ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+        ansible_ssh_common_args: >
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh -W %h:%p -i ~/.ssh/id_rsa 
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          azureuser@{{ jumpoff_ip }}"
+        ansible_python_interpreter: /usr/bin/python3
+        mysql_db_name: "{{ mysql_db_name }}"
+        mysql_admin_user: "{{ mysql_admin_user }}"
+        mysql_admin_password: "{{ mysql_admin_password }}"
+        mysql_server_fqdn: "{{ mysql_fqdn }}"
+      loop:
+        - { name: "app-vm-1", ip: "10.0.0.20" }
+        - { name: "app-vm-2", ip: "10.0.0.21" }
+
+    - name: Attendre que le jumpoff soit accessible
+      ansible.builtin.wait_for:
+        host: "{{ jumpoff_ip }}"
+        port: 22
+        timeout: 60
+
+    - name: Attendre que les VMs applicatives soient accessibles (via jumpoff)
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null azureuser@{{ jumpoff_ip }}" \
+            -i ~/.ssh/id_rsa azureuser@{{ item }} echo "VM {{ item }} ready"
+      loop:
+        - "10.0.0.20"
+        - "10.0.0.21"
+      register: vm_check
+      retries: 10
+      delay: 10
+      until: vm_check.rc == 0
+      changed_when: false
+
+    - name: Pause pour laisser cloud-init terminer (si présent)
+      ansible.builtin.pause:
+        seconds: 30
+
+- name: Déployer WordPress sur les VMs applicatives
+  hosts: app_vms
+  become: true
+  gather_facts: false  # Désactivé temporairement
+  serial: 1  # Déploiement un par un pour éviter les conflits
+
+  vars:
+    wp_install_dir: "/var/www/wordpress"
+    wp_php_version: "8.1"
+
+  tasks:
+    # =============================================
+    # Vérification de la connectivité
+    # =============================================
+    - name: Ping la VM
+      ansible.builtin.ping:
+
+    - name: Collecter les facts
+      ansible.builtin.setup:
+      register: setup_result
+      until: setup_result is succeeded
+      retries: 3
+      delay: 5
+
+    # =============================================
+    # Mise à jour du système
+    # =============================================
+    - name: Mettre à jour le cache apt
+      ansible.builtin.apt:
+        update_cache: true
+      changed_when: false
+
+    # =============================================
+    # Installation des dépendances
+    # =============================================
+    - name: Installer les packages nécessaires
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - mysql-client
+          - "php{{ wp_php_version }}-fpm"
+          - "php{{ wp_php_version }}-mysql"
+          - "php{{ wp_php_version }}-curl"
+          - "php{{ wp_php_version }}-gd"
+          - "php{{ wp_php_version }}-mbstring"
+          - "php{{ wp_php_version }}-xml"
+          - "php{{ wp_php_version }}-xmlrpc"
+          - "php{{ wp_php_version }}-soap"
+          - "php{{ wp_php_version }}-intl"
+          - "php{{ wp_php_version }}-zip"
+          - unzip
+          - curl
+          - rsync
+          - openssl
+          - python3-pymysql
+        state: present
+        update_cache: true
+
+    # =============================================
+    # Configuration PHP-FPM
+    # =============================================
+    - name: Configurer PHP-FPM pour WordPress
+      ansible.builtin.lineinfile:
+        path: "/etc/php/{{ wp_php_version }}/fpm/php.ini"
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^;?upload_max_filesize', line: 'upload_max_filesize = 64M' }
+        - { regexp: '^;?post_max_size', line: 'post_max_size = 64M' }
+        - { regexp: '^;?max_execution_time', line: 'max_execution_time = 300' }
+        - { regexp: '^;?memory_limit', line: 'memory_limit = 256M' }
+      notify: Restart PHP-FPM
+
+    # =============================================
+    # Création du répertoire WordPress
+    # =============================================
+    - name: Créer le répertoire WordPress
+      ansible.builtin.file:
+        path: "{{ wp_install_dir }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    # =============================================
+    # Téléchargement de WordPress
+    # =============================================
+    - name: Télécharger WordPress
+      ansible.builtin.get_url:
+        url: https://wordpress.org/latest.tar.gz
+        dest: /tmp/wordpress.tar.gz
+        mode: '0644'
+
+    - name: Extraire WordPress
+      ansible.builtin.unarchive:
+        src: /tmp/wordpress.tar.gz
+        dest: /tmp/
+        remote_src: true
+        creates: /tmp/wordpress/wp-config-sample.php
+
+    - name: Copier les fichiers WordPress
+      ansible.builtin.command: >
+        rsync -a --delete /tmp/wordpress/ {{ wp_install_dir }}/
+      changed_when: true
+
+    - name: Nettoyer l'archive temporaire
+      ansible.builtin.file:
+        path: /tmp/wordpress.tar.gz
+        state: absent
+
+    # =============================================
+    # Configuration des permissions
+    # =============================================
+    - name: Définir les permissions sur WordPress
+      ansible.builtin.file:
+        path: "{{ wp_install_dir }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        recurse: true
+
+    - name: Définir les permissions sur les fichiers
+      ansible.builtin.shell: >
+        find {{ wp_install_dir }} -type f -exec chmod 644 {} \;
+      changed_when: false
+
+    - name: Définir les permissions sur les répertoires
+      ansible.builtin.shell: >
+        find {{ wp_install_dir }} -type d -exec chmod 755 {} \;
+      changed_when: false
+
+    # =============================================
+    # Configuration wp-config.php
+    # =============================================
+    - name: Copier wp-config-sample.php vers wp-config.php
+      ansible.builtin.copy:
+        src: "{{ wp_install_dir }}/wp-config-sample.php"
+        dest: "{{ wp_install_dir }}/wp-config.php"
+        remote_src: true
+        force: false
+
+    - name: Configurer la base de données dans wp-config.php
+      ansible.builtin.lineinfile:
+        path: "{{ wp_install_dir }}/wp-config.php"
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - regexp: "define\\(\\s*'DB_NAME'"
+          line: "define( 'DB_NAME', '{{ mysql_db_name }}' );"
+        - regexp: "define\\(\\s*'DB_USER'"
+          line: "define( 'DB_USER', '{{ mysql_admin_user }}' );"
+        - regexp: "define\\(\\s*'DB_PASSWORD'"
+          line: "define( 'DB_PASSWORD', '{{ mysql_admin_password }}' );"
+        - regexp: "define\\(\\s*'DB_HOST'"
+          line: "define( 'DB_HOST', '{{ mysql_server_fqdn }}' );"
+
+    - name: Récupérer les clés de sécurité WordPress
+      ansible.builtin.uri:
+        url: https://api.wordpress.org/secret-key/1.1/salt/
+        return_content: true
+      register: wp_salt_keys
+      delegate_to: localhost
+      run_once: true
+      become: false  # Pas besoin de sudo pour un appel HTTP
+
+    - name: Supprimer les anciennes clés de sécurité
+      ansible.builtin.lineinfile:
+        path: "{{ wp_install_dir }}/wp-config.php"
+        regexp: "define\\('(AUTH|SECURE_AUTH|LOGGED_IN|NONCE)_(KEY|SALT)"
+        state: absent
+
+    - name: Insérer les clés de sécurité
+      ansible.builtin.blockinfile:
+        path: "{{ wp_install_dir }}/wp-config.php"
+        marker: ""
+        block: "{{ wp_salt_keys.content }}"
+        insertafter: "define\\(\\s*''DB_COLLATE''\\)"
+
+    # =============================================
+    # SSL Auto-signé
+    # =============================================
+    - name: Créer le répertoire pour les certificats SSL
+      ansible.builtin.file:
+        path: /etc/ssl/private
+        state: directory
+        mode: '0700'
+
+    - name: Générer le certificat SSL auto-signé
+      ansible.builtin.command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /etc/ssl/private/nginx-selfsigned.key
+        -out /etc/ssl/certs/nginx-selfsigned.crt
+        -subj "/CN=wordpress"
+      args:
+        creates: /etc/ssl/certs/nginx-selfsigned.crt
+
+    - name: Définir les permissions sur la clé privée
+      ansible.builtin.file:
+        path: /etc/ssl/private/nginx-selfsigned.key
+        mode: '0600'
+
+    # =============================================
+    # Configuration Nginx
+    # =============================================
+    - name: Créer la configuration Nginx pour WordPress
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/wordpress
+        content: |
+          server {
+              listen 80 default_server;
+              listen 443 ssl default_server;
+
+              ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+              ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+              server_name _;
+              root {{ wp_install_dir }};
+              index index.php index.html;
+
+              location / {
+                  try_files $uri $uri/ /index.php?$args;
+              }
+
+              location ~ \.php$ {
+                  include snippets/fastcgi-php.conf;
+                  fastcgi_pass unix:/run/php/php{{ wp_php_version }}-fpm.sock;
+                  fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  include fastcgi_params;
+              }
+
+              location ~ /\.ht {
+                  deny all;
+              }
+
+              location = /wp-config.php {
+                  deny all;
+              }
+
+              client_max_body_size 64M;
+          }
+      notify: Restart Nginx
+
+    - name: Supprimer le site par défaut
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Activer le site WordPress
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/wordpress
+        dest: /etc/nginx/sites-enabled/wordpress
+        state: link
+      notify: Restart Nginx
+
+    # =============================================
+    # Démarrage des services
+    # =============================================
+    - name: Démarrer et activer PHP-FPM
+      ansible.builtin.systemd:
+        name: "php{{ wp_php_version }}-fpm"
+        state: started
+        enabled: true
+
+    - name: Démarrer et activer Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    # =============================================
+    # Vérification
+    # =============================================
+    - name: Vérifier que Nginx écoute sur le port 80
+      ansible.builtin.wait_for:
+        port: 80
+        timeout: 10
+
+    - name: Tester la page WordPress
+      ansible.builtin.uri:
+        url: "http://localhost/wp-admin/install.php"
+        status_code: 200
+      register: wp_test
+      ignore_errors: true
+
+    - name: Afficher le statut du déploiement
+      ansible.builtin.debug:
+        msg:
+          - "✅ WordPress déployé avec succès sur {{ inventory_hostname }}"
+          - "📁 Répertoire: {{ wp_install_dir }}"
+          - "🌐 URL d'installation: http://{{ ansible_host }}/wp-admin/install.php"
+
+  handlers:
+    - name: Restart PHP-FPM
+      ansible.builtin.systemd:
+        name: "php{{ wp_php_version }}-fpm"
+        state: restarted
+
+    - name: Restart Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted
