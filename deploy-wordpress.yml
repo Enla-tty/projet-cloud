@@ -28,19 +28,34 @@
           - "Jumpoff IP: {{ jumpoff_ip }}"
           - "MySQL FQDN: {{ mysql_fqdn }}"
 
+    - name: Créer le répertoire SSH temporaire
+      ansible.builtin.file:
+        path: "/tmp/wordpress_ssh"
+        state: directory
+        mode: '0700'
+
+    - name: Écrire la clé privée SSH pour les connexions
+      ansible.builtin.copy:
+        content: "{{ ssh_private_key }}"
+        dest: "/tmp/wordpress_ssh/id_rsa"
+        mode: '0600'
+      no_log: true
+
     - name: Ajouter les VMs applicatives à l'inventaire dynamique
       ansible.builtin.add_host:
         name: "{{ item.name }}"
         groups: app_vms
         ansible_host: "{{ item.ip }}"
         ansible_user: azureuser
-        ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+        ansible_ssh_private_key_file: "/tmp/wordpress_ssh/id_rsa"
         ansible_ssh_common_args: >
           -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null
-          -o ProxyCommand="ssh -W %h:%p -i ~/.ssh/id_rsa 
+          -o IdentitiesOnly=yes
+          -o ProxyCommand="ssh -i /tmp/wordpress_ssh/id_rsa -W %h:%p 
           -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null
+          -o IdentitiesOnly=yes
           azureuser@{{ jumpoff_ip }}"
         ansible_python_interpreter: /usr/bin/python3
         mysql_db_name: "{{ mysql_db_name }}"
@@ -57,23 +72,24 @@
         port: 22
         timeout: 60
 
-    - name: Attendre que les VMs applicatives soient accessibles (via jumpoff)
+    - name: Tester la connexion SSH via jumpoff
       ansible.builtin.shell: |
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null azureuser@{{ jumpoff_ip }}" \
-            -i ~/.ssh/id_rsa azureuser@{{ item }} echo "VM {{ item }} ready"
+        ssh -i /tmp/wordpress_ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o IdentitiesOnly=yes \
+            -o ProxyCommand="ssh -i /tmp/wordpress_ssh/id_rsa -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes azureuser@{{ jumpoff_ip }}" \
+            azureuser@{{ item }} echo "VM {{ item }} ready"
       loop:
         - "10.0.0.20"
         - "10.0.0.21"
-      register: vm_check
+      register: ssh_test
       retries: 10
       delay: 10
-      until: vm_check.rc == 0
+      until: ssh_test.rc == 0
       changed_when: false
 
-    - name: Pause pour laisser cloud-init terminer (si présent)
+    - name: Pause pour laisser les VMs démarrer complètement
       ansible.builtin.pause:
-        seconds: 30
+        seconds: 15
 
 - name: Déployer WordPress sur les VMs applicatives
   hosts: app_vms

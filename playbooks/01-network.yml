@@ -63,3 +63,4 @@
         location: "{{ location }}"
         sku: "Standard"
         allocation_method: "Static"
+        domain_name_label: "wordpressdemohexagone"

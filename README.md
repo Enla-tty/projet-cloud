@@ -25,22 +25,20 @@ Déploiement automatisé d'une infrastructure WordPress sur Azure avec Ansible.
 
 ```
 projet-cloud/
-├── site.yml                    # Déploiement avec cloud-init (original)
+├── site.yml                    # Déploiement avec cloud-init
 ├── site-full.yml               # Déploiement complet Ansible SSH
-├── deploy-wordpress.yml        # Déploiement WordPress sur VMs existantes
-├── deploy-wordpress-only.yml   # Wrapper pour WordPress seul
-├── infrastructure_wordpress.yml # Playbook monolithique (tout-en-un)
-├── inventory.yml               # Inventaire des VMs
+├── deploy-wordpress.yml        # Déploiement WordPress via SSH
 ├── playbooks/
 │   ├── 01-network.yml                    # Création du réseau
 │   ├── 02-mysql.yml                      # Création du serveur MySQL
-│   ├── 03-infrastructure.yml             # VMs avec cloud-init
-│   └── 03-infrastructure-no-cloudinit.yml # VMs sans cloud-init (pour SSH)
+│   ├── 03-infrastructure.yml             # VMs avec cloud-init (site.yml)
+│   └── 03-infrastructure-no-cloudinit.yml # VMs sans cloud-init (site-full.yml)
 ├── files/
 │   └── cloud-init-app.yml.j2   # Template cloud-init pour les VMs
 ├── vars/
 │   ├── secrets.yml             # Credentials (chiffré avec ansible-vault)
 │   └── secrets.yml.example     # Exemple de secrets
+├── README.md                   # Documentation
 └── requirements.txt            # Dépendances Python
 ```
 
@@ -77,22 +75,6 @@ Déploie l'infrastructure, WordPress est installé automatiquement via cloud-ini
 ansible-playbook site.yml --ask-vault-pass
 ```
 
-### Option 3 : WordPress sur infrastructure existante
-
-Si l'infrastructure est déjà déployée, déploie uniquement WordPress :
-
-```bash
-ansible-playbook deploy-wordpress-only.yml --ask-vault-pass
-```
-
-### Option 4 : Playbook monolithique
-
-Playbook tout-en-un (sans dépendances externes) :
-
-```bash
-ansible-playbook infrastructure_wordpress.yml --ask-vault-pass
-```
-
 ## Connexion aux VMs
 
 ```bash
@@ -117,9 +99,8 @@ az mysql flexible-server show \
   --query "{name:name, state:state, fqdn:fullyQualifiedDomainName}" \
   -o table
 
-# Tester WordPress
-LB_IP=$(az network public-ip show -g wordpress-rg -n lb-pip --query ipAddress -o tsv)
-curl -I http://$LB_IP
+# Tester WordPress (via FQDN)
+curl -I http://wordpressdemohexagone.denmarkeast.cloudapp.azure.com
 ```
 
 ## Nettoyage

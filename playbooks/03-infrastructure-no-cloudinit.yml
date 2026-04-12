@@ -16,19 +16,35 @@
       sku: "22_04-lts-gen2"
       version: "latest"
 
+  vars_files:
+    - ../vars/secrets.yml
+
   tasks:
 
     # =============================================
 
-    - name: Générer la clé SSH si elle n'existe pas
-      community.crypto.openssh_keypair:
-        path: "~/.ssh/id_rsa"
-        type: rsa
-        size: 4096
+    - name: Créer le répertoire SSH temporaire
+      ansible.builtin.file:
+        path: "/tmp/wordpress_ssh"
+        state: directory
+        mode: '0700'
+
+    - name: Écrire la clé privée SSH
+      ansible.builtin.copy:
+        content: "{{ ssh_private_key }}"
+        dest: "/tmp/wordpress_ssh/id_rsa"
+        mode: '0600'
+      no_log: true
+
+    - name: Écrire la clé publique SSH
+      ansible.builtin.copy:
+        content: "{{ ssh_public_key }}"
+        dest: "/tmp/wordpress_ssh/id_rsa.pub"
+        mode: '0644'
 
     - name: Lire la clé publique SSH
-      slurp:
-        src: "~/.ssh/id_rsa.pub"
+      ansible.builtin.slurp:
+        src: "/tmp/wordpress_ssh/id_rsa.pub"
       register: ssh_pub_key
 
     # =============================================
@@ -176,6 +192,7 @@
         location: "{{ location }}"
         virtual_network: "{{ vnet_name }}"
         subnet_name: "subnet-app"
+        security_group: "app-nsg"
         ip_configurations:
           - name: "ipconfig1"
             primary: true
@@ -187,6 +204,7 @@
         location: "{{ location }}"
         virtual_network: "{{ vnet_name }}"
         subnet_name: "subnet-app"
+        security_group: "app-nsg"
         ip_configurations:
           - name: "ipconfig1"
             primary: true
